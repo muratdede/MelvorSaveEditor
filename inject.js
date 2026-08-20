@@ -1,636 +1,406 @@
 (() => {
     const d = document;
 
-    const div = d.createElement("div");
-    div.style = `
-        position:fixed;
-        top:80px;
-        left:80px;
-        width:min(900px, calc(100vw - 40px));
-        height:min(750px, calc(100vh - 40px));
-        z-index:999999;
-        background:#111;
-        border:1px solid #444;
-        border-radius:8px;
-        box-shadow:0 10px 35px rgba(0,0,0,.55);
-        display:flex;
-        flex-direction:column;
-        overflow:hidden;
-        resize:both;
-        min-width:420px;
-        min-height:320px;
-        font-family:Arial,sans-serif;
+    const old = d.getElementById("melvor-smart-save-editor");
+    if (old) old.remove();
+
+    const win = d.createElement("div");
+    win.id = "melvor-smart-save-editor";
+    win.style.cssText = `
+        position:fixed; top:70px; left:70px;
+        width:min(980px,calc(100vw - 40px));
+        height:min(780px,calc(100vh - 40px));
+        min-width:600px; min-height:420px;
+        z-index:2147483647;
+        background:#111827; color:#e5e7eb;
+        border:1px solid #374151; border-radius:10px;
+        box-shadow:0 18px 60px rgba(0,0,0,.55);
+        display:flex; flex-direction:column; overflow:hidden;
+        resize:both; font:13px/1.35 Arial,sans-serif;
     `;
 
-    div.innerHTML = `
-        <div id="titlebar" style="
-            height:34px;
-            min-height:34px;
-            padding:0 6px 0 10px;
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            background:#222;
-            color:#eee;
-            cursor:move;
-            user-select:none;
-            border-bottom:1px solid #444;
-        ">
-            <span>Melvor Save JSON Editor</span>
-            <button id="close" title="Close" style="
-                width:28px;
-                height:28px;
-                border:0;
-                border-radius:5px;
-                background:transparent;
-                color:#ddd;
-                font-size:20px;
-                line-height:20px;
-                cursor:pointer;
-            ">×</button>
+    win.innerHTML = `
+        <div id="mse-titlebar" style="height:38px;min-height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 7px 0 12px;background:#0b1220;border-bottom:1px solid #374151;cursor:move;user-select:none">
+            <strong>Melvor Smart Save Editor</strong>
+            <button id="mse-close" title="Close" style="width:30px;height:30px;border:0;border-radius:6px;background:transparent;color:#d1d5db;font-size:21px;cursor:pointer">×</button>
         </div>
 
-        <div style="
-            padding:10px;
-            display:flex;
-            flex-direction:column;
-            gap:5px;
-            flex:1;
-            min-height:0;
-        ">
-            <textarea id="save" placeholder="Save String" style="height:20%;min-height:50px"></textarea>
-            <button id="decode">Decode</button>
+        <div style="padding:10px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0">
+            <div style="display:grid;grid-template-columns:1fr auto;gap:7px">
+                <textarea id="mse-save" placeholder="Save String" style="height:68px;resize:vertical;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:7px"></textarea>
+                <button id="mse-decode" style="min-width:92px">Decode</button>
+            </div>
 
-            <textarea id="json" style="flex:1;min-height:80px"></textarea>
+            <div id="mse-status" style="min-height:18px;color:#9ca3af"></div>
 
-            <button id="encode">Encode</button>
-            <textarea id="output" placeholder="New Save String" style="height:20%;min-height:50px"></textarea>
+            <div id="mse-tree" style="flex:1;min-height:0;overflow:auto;border:1px solid #374151;border-radius:7px;background:#0f172a"></div>
+
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:7px">
+                <button id="mse-encode">Encode Save</button>
+                <textarea id="mse-output" readonly placeholder="New Save String" style="height:62px;resize:vertical;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:7px"></textarea>
+            </div>
         </div>
     `;
 
-    d.body.appendChild(div);
+    d.body.appendChild(win);
 
-    const save = div.querySelector("#save");
-    const json = div.querySelector("#json");
-    const output = div.querySelector("#output");
-    const decodeBtn = div.querySelector("#decode");
-    const encodeBtn = div.querySelector("#encode");
-    const closeBtn = div.querySelector("#close");
-    const titlebar = div.querySelector("#titlebar");
+    const $ = s => win.querySelector(s);
+    const tree = $("#mse-tree");
+    const saveInput = $("#mse-save");
+    const output = $("#mse-output");
+    const status = $("#mse-status");
 
+    const esc = value => String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+
+    function setStatus(message, error = false) {
+        status.textContent = message;
+        status.style.color = error ? "#fca5a5" : "#9ca3af";
+    }
+
+    function getItemByID(id) {
+        return game?.items?.getObjectByID?.(id.trim());
+    }
+
+    function getGoldCurrency() {
+        return game?.gp ?? game?.currencies?.getObjectByID?.("melvorD:GP");
+    }
+
+    function currencyAmount(currency) {
+        if (!currency) return 0;
+        if (typeof currency.amount === "number") return currency.amount;
+        if (typeof currency._amount === "number") return currency._amount;
+        return Number(currency.amount ?? currency._amount ?? 0);
+    }
+
+    function setCurrencyAmount(currency, requested) {
+        const target = Math.max(0, Math.floor(Number(requested)));
+        if (!Number.isFinite(target)) throw new Error("Invalid gold amount");
+
+        const current = currencyAmount(currency);
+        const delta = target - current;
+        if (delta === 0) return;
+
+        if (delta > 0 && typeof currency.add === "function") {
+            currency.add(delta);
+            return;
+        }
+        if (delta < 0 && typeof currency.remove === "function") {
+            currency.remove(-delta);
+            return;
+        }
+        if ("_amount" in currency) {
+            currency._amount = target;
+            return;
+        }
+        if ("amount" in currency) {
+            currency.amount = target;
+            return;
+        }
+        throw new Error("Gold currency cannot be modified with this game version.");
+    }
+
+    function bankEntries() {
+        const items = game?.bank?.items;
+        if (!(items instanceof Map)) return [];
+        return [...items.entries()].map(([item, bankItem]) => ({ item, bankItem }));
+    }
+
+    function itemName(item) {
+        try { return item?.name ?? item?.id ?? "Unknown"; }
+        catch { return item?.id ?? "Unknown"; }
+    }
+
+    function itemMedia(item) {
+        try { return item?.media ?? ""; }
+        catch { return ""; }
+    }
+
+    function removeBankItem(item, qty) {
+        if (qty <= 0) return;
+        if (typeof game.bank.removeItemQuantity === "function") {
+            game.bank.removeItemQuantity(item, qty, true);
+            return;
+        }
+        throw new Error("game.bank.removeItemQuantity() is unavailable.");
+    }
+
+    function addBankItem(item, qty) {
+        if (qty <= 0) return;
+        if (typeof game.bank.addItem === "function") {
+            // logLost=false, found=true, ignoreSpace=true, notify=false
+            game.bank.addItem(item, qty, false, true, true, false);
+            return;
+        }
+        if (typeof game.bank.addItemByID === "function") {
+            game.bank.addItemByID(item.id, qty, false);
+            return;
+        }
+        throw new Error("No supported bank add method found.");
+    }
+
+    function replaceBankItem(oldID, newID) {
+        const oldItem = getItemByID(oldID);
+        const newItem = getItemByID(newID);
+        if (!oldItem) throw new Error(`Old item not found: ${oldID}`);
+        if (!newItem) throw new Error(`Item ID not found: ${newID}`);
+        if (oldItem === newItem) return;
+
+        const oldBankItem = game.bank.items.get(oldItem);
+        if (!oldBankItem) throw new Error(`Bank item not found: ${oldID}`);
+
+        const qty = Number(oldBankItem.quantity) || 0;
+        const oldTab = oldBankItem.tab;
+        const oldPosition = oldBankItem.tabPosition;
+        const targetAlreadyExists = game.bank.items.has(newItem);
+
+        // Use Bank's public mutation API so all internal indexes remain valid.
+        removeBankItem(oldItem, qty);
+        addBankItem(newItem, qty);
+
+        // If the target did not already exist, retain the old visual placement
+        // when this game build exposes writable placement fields.
+        if (!targetAlreadyExists) {
+            const newBankItem = game.bank.items.get(newItem);
+            if (newBankItem) {
+                try { if (oldTab !== undefined) newBankItem.tab = oldTab; } catch {}
+                try { if (oldPosition !== undefined) newBankItem.tabPosition = oldPosition; } catch {}
+            }
+        }
+    }
+
+    function setBankQuantity(id, requested) {
+        const item = getItemByID(id);
+        if (!item) throw new Error(`Item ID not found: ${id}`);
+        const bankItem = game.bank.items.get(item);
+        if (!bankItem) throw new Error(`Bank item not found: ${id}`);
+
+        const target = Math.max(0, Math.floor(Number(requested)));
+        if (!Number.isFinite(target)) throw new Error("Invalid quantity");
+        const current = Number(bankItem.quantity) || 0;
+        const delta = target - current;
+
+        if (delta > 0) addBankItem(item, delta);
+        else if (delta < 0) removeBankItem(item, -delta);
+    }
+
+    function render() {
+        const gold = getGoldCurrency();
+        const entries = bankEntries();
+        const allItems = game?.items?.allObjects ? [...game.items.allObjects] : [];
+
+        const itemOptions = allItems.map(item =>
+            `<option value="${esc(item.id)}">${esc(itemName(item))}</option>`
+        ).join("");
+
+        const rows = entries.map(({ item, bankItem }, index) => {
+            const media = itemMedia(item);
+            return `
+                <tr data-old-id="${esc(item.id)}">
+                    <td style="width:36px;text-align:center">${media ? `<img src="${esc(media)}" style="width:28px;height:28px;object-fit:contain" onerror="this.style.display='none'">` : ""}</td>
+                    <td style="min-width:170px"><div class="mse-item-name" style="font-weight:600">${esc(itemName(item))}</div></td>
+                    <td style="min-width:260px"><input class="mse-item-id" list="mse-item-ids" value="${esc(item.id)}" style="width:100%;box-sizing:border-box"></td>
+                    <td style="width:120px"><input class="mse-qty" type="number" min="0" step="1" value="${esc(bankItem.quantity)}" style="width:100%;box-sizing:border-box"></td>
+                    <td style="width:58px;text-align:center">${esc(bankItem.tab ?? "")}</td>
+                    <td style="width:70px;text-align:center">${esc(bankItem.tabPosition ?? index)}</td>
+                </tr>
+            `;
+        }).join("");
+
+        tree.innerHTML = `
+            <datalist id="mse-item-ids">${itemOptions}</datalist>
+
+            <details open style="border-bottom:1px solid #374151">
+                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">▾ Gold Currency</summary>
+                <div style="padding:12px;display:grid;grid-template-columns:180px minmax(180px,320px);align-items:center;gap:8px">
+                    <label for="mse-gold">Gold (GP)</label>
+                    <input id="mse-gold" type="number" min="0" step="1" value="${esc(currencyAmount(gold))}">
+                </div>
+            </details>
+
+            <details open>
+                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">▾ Bank Items <span style="font-weight:400;color:#9ca3af">(${entries.length})</span></summary>
+                <div style="padding:8px">
+                    <div style="display:grid;grid-template-columns:minmax(260px,1fr) 120px auto;gap:6px;margin-bottom:8px">
+                        <input id="mse-add-id" list="mse-item-ids" placeholder="Item ID, e.g. melvorD:Tin_Ore">
+                        <input id="mse-add-qty" type="number" min="1" step="1" value="1">
+                        <button id="mse-add">Add Item</button>
+                    </div>
+                    <div id="mse-add-preview" style="min-height:18px;margin-bottom:7px;color:#9ca3af"></div>
+
+                    <div style="overflow:auto">
+                        <table style="width:100%;border-collapse:collapse;white-space:nowrap">
+                            <thead style="position:sticky;top:0;background:#1f2937;z-index:1">
+                                <tr>
+                                    <th></th><th style="text-align:left">Item</th><th style="text-align:left">ID</th><th>Quantity</th><th>Tab</th><th>Pos</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
+        `;
+
+        tree.querySelectorAll("input,button").forEach(el => {
+            el.style.background = el.tagName === "BUTTON" ? "#243244" : "#0b1220";
+            el.style.color = "#e5e7eb";
+            el.style.border = "1px solid #4b5563";
+            el.style.borderRadius = "5px";
+            el.style.padding = "6px";
+        });
+        tree.querySelectorAll("th,td").forEach(el => {
+            el.style.padding = "5px 6px";
+            el.style.borderBottom = "1px solid #263244";
+        });
+
+        const goldInput = tree.querySelector("#mse-gold");
+        if (goldInput) {
+            goldInput.addEventListener("change", () => {
+                try {
+                    const currency = getGoldCurrency();
+                    if (!currency) throw new Error("Gold currency not found.");
+                    setCurrencyAmount(currency, goldInput.value);
+                    goldInput.value = currencyAmount(currency);
+                    setStatus("Gold updated.");
+                } catch (e) {
+                    setStatus(e.stack || e.message || String(e), true);
+                    console.error(e);
+                }
+            });
+        }
+
+        tree.querySelectorAll(".mse-item-id").forEach(input => {
+            const row = input.closest("tr");
+            const preview = row.querySelector(".mse-item-name");
+
+            input.addEventListener("input", () => {
+                const resolved = getItemByID(input.value);
+                preview.textContent = resolved ? itemName(resolved) : "Unknown item";
+                preview.style.color = resolved ? "#e5e7eb" : "#fca5a5";
+            });
+
+            input.addEventListener("change", () => {
+                const oldID = row.dataset.oldId;
+                const newID = input.value.trim();
+                try {
+                    replaceBankItem(oldID, newID);
+                    setStatus(`${oldID} → ${newID} updated.`);
+                    render();
+                } catch (e) {
+                    input.value = oldID;
+                    setStatus(e.stack || e.message || String(e), true);
+                    console.error(e);
+                    render();
+                }
+            });
+        });
+
+        tree.querySelectorAll(".mse-qty").forEach(input => {
+            const row = input.closest("tr");
+            input.addEventListener("change", () => {
+                try {
+                    setBankQuantity(row.dataset.oldId, input.value);
+                    setStatus(`${row.dataset.oldId} quantity updated.`);
+                    render();
+                } catch (e) {
+                    setStatus(e.stack || e.message || String(e), true);
+                    console.error(e);
+                    render();
+                }
+            });
+        });
+
+        const addID = tree.querySelector("#mse-add-id");
+        const addQty = tree.querySelector("#mse-add-qty");
+        const addPreview = tree.querySelector("#mse-add-preview");
+        const addBtn = tree.querySelector("#mse-add");
+
+        if (addID) {
+            addID.addEventListener("input", () => {
+                const item = getItemByID(addID.value);
+                addPreview.textContent = item ? itemName(item) : (addID.value ? "Unknown item ID" : "");
+                addPreview.style.color = item ? "#86efac" : "#fca5a5";
+            });
+        }
+
+        if (addBtn) {
+            addBtn.addEventListener("click", () => {
+                try {
+                    const item = getItemByID(addID.value);
+                    if (!item) throw new Error(`Item ID not found: ${addID.value}`);
+                    const qty = Math.max(1, Math.floor(Number(addQty.value)));
+                    if (!Number.isFinite(qty)) throw new Error("Invalid quantity");
+                    addBankItem(item, qty);
+                    setStatus(`${item.id} x${qty} added.`);
+                    render();
+                } catch (e) {
+                    setStatus(e.stack || e.message || String(e), true);
+                    console.error(e);
+                }
+            });
+        }
+    }
+
+    $("#mse-decode").onclick = () => {
+        try {
+            const reader = new SaveWriter("Read", 1);
+            const saveVersion = reader.setDataFromSaveString(saveInput.value.trim());
+            game.decode(reader, saveVersion);
+            output.value = "";
+            render();
+            setStatus(`Decoded save version ${saveVersion}. Edit Gold or Bank Items below.`);
+        } catch (e) {
+            console.error(e);
+            setStatus(e.stack || e.message || String(e), true);
+            alert(e.stack || e);
+        }
+    };
+
+    $("#mse-encode").onclick = () => {
+        try {
+            output.value = game.generateSaveString();
+            setStatus(`Save generated (${output.value.length.toLocaleString()} chars).`);
+        } catch (e) {
+            console.error(e);
+            setStatus(e.stack || e.message || String(e), true);
+            alert(e.stack || e);
+        }
+    };
+
+    $("#mse-close").onclick = () => win.remove();
+
+    // Draggable title bar
+    const titlebar = $("#mse-titlebar");
     let dragging = false;
-    let dragOffsetX = 0;
-    let dragOffsetY = 0;
+    let dx = 0;
+    let dy = 0;
 
     titlebar.addEventListener("mousedown", e => {
-        if (e.target.closest("#close"))
-            return;
-
+        if (e.target.closest("#mse-close")) return;
         dragging = true;
-
-        const rect = div.getBoundingClientRect();
-        dragOffsetX = e.clientX - rect.left;
-        dragOffsetY = e.clientY - rect.top;
-
-        document.body.style.userSelect = "none";
+        const r = win.getBoundingClientRect();
+        dx = e.clientX - r.left;
+        dy = e.clientY - r.top;
+        d.body.style.userSelect = "none";
         e.preventDefault();
     });
 
     d.addEventListener("mousemove", e => {
-        if (!dragging)
-            return;
-
-        const maxLeft = Math.max(0, window.innerWidth - div.offsetWidth);
-        const maxTop = Math.max(0, window.innerHeight - div.offsetHeight);
-
-        const left = Math.min(
-            Math.max(0, e.clientX - dragOffsetX),
-            maxLeft
-        );
-
-        const top = Math.min(
-            Math.max(0, e.clientY - dragOffsetY),
-            maxTop
-        );
-
-        div.style.left = `${left}px`;
-        div.style.top = `${top}px`;
+        if (!dragging || !win.isConnected) return;
+        const left = Math.min(Math.max(0, e.clientX - dx), Math.max(0, innerWidth - win.offsetWidth));
+        const top = Math.min(Math.max(0, e.clientY - dy), Math.max(0, innerHeight - win.offsetHeight));
+        win.style.left = `${left}px`;
+        win.style.top = `${top}px`;
     });
 
     d.addEventListener("mouseup", () => {
-        if (!dragging)
-            return;
-
         dragging = false;
-        document.body.style.userSelect = "";
+        d.body.style.userSelect = "";
     });
 
-    function snap(value, seen = new WeakSet(), depth = 0) {
-        if (value == null)
-            return value;
-
-        if (
-            typeof value === "string" ||
-            typeof value === "number" ||
-            typeof value === "boolean"
-        )
-            return value;
-
-        if (
-            typeof value === "undefined" ||
-            typeof value === "function"
-        )
-            return undefined;
-
-        if (value === game)
-            return undefined;
-
-        if (depth > 10)
-            return undefined;
-
-        if (typeof value === "object") {
-            if (seen.has(value))
-                return undefined;
-
-            seen.add(value);
-        }
-
-        if (value instanceof Map) {
-            return {
-                __type: "Map",
-                entries: [...value.entries()].map(([k, v]) => [
-                    snap(k, seen, depth + 1),
-                    snap(v, seen, depth + 1)
-                ])
-            };
-        }
-
-        if (value instanceof Set) {
-            return {
-                __type: "Set",
-                values: [...value].map(v =>
-                    snap(v, seen, depth + 1)
-                )
-            };
-        }
-
-        if (Array.isArray(value)) {
-            return value.map(v =>
-                snap(v, seen, depth + 1)
-            );
-        }
-
-        if (
-            depth > 0 &&
-            typeof value.id === "string" &&
-            (
-                value.namespace !== undefined ||
-                value.localID !== undefined
-            )
-        ) {
-            return {
-                __ref: value.id
-            };
-        }
-
-        const className =
-            value.constructor?.name ?? "";
-
-        if (
-            className.includes("Registry") ||
-            className === "NamespaceMap" ||
-            className === "NamespaceRegistry"
-        )
-            return undefined;
-
-        const out = {};
-
-        for (const key of Object.keys(value)) {
-            if (
-                key === "game" ||
-                key === "_game" ||
-                key === "renderQueue" ||
-                key === "registeredNamespaces" ||
-                key === "dummyNamespaces"
-            )
-                continue;
-
-            try {
-                const v = snap(
-                    value[key],
-                    seen,
-                    depth + 1
-                );
-
-                if (v !== undefined)
-                    out[key] = v;
-
-            } catch {}
-        }
-
-        return out;
-    }
-
-    function snapshotSaveData() {
-        return {
-            tickTimestamp:
-                game.tickTimestamp,
-
-            saveTimestamp:
-                game.saveTimestamp,
-
-            activeAction:
-                game.activeAction
-                    ? { __ref: game.activeAction.id }
-                    : null,
-
-            pausedAction:
-                game.pausedAction
-                    ? { __ref: game.pausedAction.id }
-                    : null,
-
-            _isPaused:
-                game._isPaused,
-
-            merchantsPermitRead:
-                game.merchantsPermitRead,
-
-            currentGamemode:
-                game.currentGamemode
-                    ? { __ref: game.currentGamemode.id }
-                    : null,
-
-            characterName:
-                game.characterName,
-
-            bank:
-                snap(game.bank),
-
-            combat:
-                snap(game.combat),
-
-            golbinRaid:
-                snap(game.golbinRaid),
-
-            minibar:
-                snap(game.minibar),
-
-            petManager:
-                snap(game.petManager),
-
-            shop:
-                snap(game.shop),
-
-            itemCharges:
-                snap(game.itemCharges),
-
-            tutorial:
-                snap(game.tutorial),
-
-            potions:
-                snap(game.potions),
-
-            stats:
-                snap(game.stats),
-
-            settings:
-                snap(game.settings),
-
-            readNewsIDs:
-                snap(game.readNewsIDs),
-
-            lastLoadedGameVersion:
-                game.lastLoadedGameVersion,
-
-            completion:
-                snap(game.completion),
-
-            keyboard:
-                snap(game.keyboard),
-
-            birthdayEvent2023CompletionTracker:
-                snap(game.birthdayEvent2023CompletionTracker),
-
-            clueHunt:
-                snap(game.clueHunt),
-
-            activeLevelCapIncreases:
-                game.activeLevelCapIncreases.map(x => ({
-                    __ref: x.id
-                })),
-
-            levelCapIncreasesBeingSelected:
-                game.levelCapIncreasesBeingSelected.map(x => ({
-                    __ref: x.id
-                })),
-
-            _levelCapIncreasesBought:
-                game._levelCapIncreasesBought,
-
-            _abyssalLevelCapIncreasesBought:
-                game._abyssalLevelCapIncreasesBought,
-
-            currentRealm:
-                game.currentRealm
-                    ? { __ref: game.currentRealm.id }
-                    : null,
-
-            skills:
-                game.skills.allObjects.map(skill => ({
-                    id: skill.id,
-                    data: snap(skill)
-                })),
-
-            currencies:
-                game.currencies.allObjects.map(currency => ({
-                    id: currency.id,
-                    data: snap(currency)
-                })),
-
-            abyssDepths:
-                game.abyssDepths.allObjects.map(x => ({
-                    id: x.id,
-                    timesCompleted: x.timesCompleted
-                })),
-
-            strongholds:
-                game.strongholds.allObjects.map(x => ({
-                    id: x.id,
-                    timesCompleted: x.timesCompleted
-                }))
-        };
-    }
-
-    function apply(target, source) {
-        if (!target || !source)
-            return;
-
-        for (const key of Object.keys(source)) {
-            const s = source[key];
-            const t = target[key];
-
-            if (
-                s &&
-                typeof s === "object" &&
-                s.__ref
-            )
-                continue;
-
-            if (
-                s &&
-                s.__type === "Map" &&
-                t instanceof Map
-            ) {
-                const oldEntries = [...t.entries()];
-
-                s.entries.forEach(([sk, sv], i) => {
-                    if (!oldEntries[i])
-                        return;
-
-                    const [oldKey, oldValue] =
-                        oldEntries[i];
-
-                    if (
-                        oldValue &&
-                        sv &&
-                        typeof oldValue === "object" &&
-                        typeof sv === "object"
-                    ) {
-                        apply(oldValue, sv);
-                    } else {
-                        t.set(oldKey, sv);
-                    }
-                });
-
-                continue;
-            }
-
-            if (
-                s &&
-                s.__type === "Set" &&
-                t instanceof Set
-            )
-                continue;
-
-            if (
-                Array.isArray(s) &&
-                Array.isArray(t)
-            ) {
-                for (let i = 0; i < s.length; i++) {
-                    if (
-                        t[i] &&
-                        s[i] &&
-                        typeof t[i] === "object" &&
-                        typeof s[i] === "object"
-                    ) {
-                        apply(t[i], s[i]);
-                    } else {
-                        t[i] = s[i];
-                    }
-                }
-
-                continue;
-            }
-
-            if (
-                s !== null &&
-                t !== null &&
-                typeof s === "object" &&
-                typeof t === "object"
-            ) {
-                apply(t, s);
-            } else {
-                target[key] = s;
-            }
-        }
-    }
-
-    function applySaveData(data) {
-        const simpleFields = [
-            "tickTimestamp",
-            "saveTimestamp",
-            "_isPaused",
-            "merchantsPermitRead",
-            "characterName",
-            "readNewsIDs",
-            "lastLoadedGameVersion",
-            "birthdayEvent2023CompletionTracker",
-            "_levelCapIncreasesBought",
-            "_abyssalLevelCapIncreasesBought"
-        ];
-
-        for (const key of simpleFields) {
-            if (key in data)
-                game[key] = data[key];
-        }
-
-        if (data.activeAction === null) {
-            game.activeAction = undefined;
-        } else if (data.activeAction?.__ref) {
-            game.activeAction =
-                game.activeActions.getObjectByID(
-                    data.activeAction.__ref
-                );
-        }
-
-        if (data.pausedAction === null) {
-            game.pausedAction = undefined;
-        } else if (data.pausedAction?.__ref) {
-            game.pausedAction =
-                game.activeActions.getObjectByID(
-                    data.pausedAction.__ref
-                );
-        }
-
-        if (data.currentGamemode?.__ref) {
-            const obj =
-                game.gamemodes.getObjectByID(
-                    data.currentGamemode.__ref
-                );
-
-            if (obj)
-                game.currentGamemode = obj;
-        }
-
-        if (data.currentRealm?.__ref) {
-            const obj =
-                game.realms.getObjectByID(
-                    data.currentRealm.__ref
-                );
-
-            if (obj)
-                game.currentRealm = obj;
-        }
-
-        const objects = [
-            "bank",
-            "combat",
-            "golbinRaid",
-            "minibar",
-            "petManager",
-            "shop",
-            "itemCharges",
-            "tutorial",
-            "potions",
-            "stats",
-            "settings",
-            "completion",
-            "keyboard",
-            "clueHunt"
-        ];
-
-        for (const key of objects) {
-            if (data[key])
-                apply(game[key], data[key]);
-        }
-
-        for (const entry of data.skills ?? []) {
-            const skill =
-                game.skills.getObjectByID(entry.id);
-
-            if (skill)
-                apply(skill, entry.data);
-        }
-
-        for (const entry of data.currencies ?? []) {
-            const currency =
-                game.currencies.getObjectByID(entry.id);
-
-            if (currency)
-                apply(currency, entry.data);
-        }
-
-        for (const entry of data.abyssDepths ?? []) {
-            const depth =
-                game.abyssDepths.getObjectByID(entry.id);
-
-            if (depth)
-                depth.timesCompleted =
-                    entry.timesCompleted;
-        }
-
-        for (const entry of data.strongholds ?? []) {
-            const stronghold =
-                game.strongholds.getObjectByID(entry.id);
-
-            if (stronghold)
-                stronghold.timesCompleted =
-                    entry.timesCompleted;
-        }
-
-        if (data.activeLevelCapIncreases) {
-            game.activeLevelCapIncreases =
-                data.activeLevelCapIncreases
-                    .map(x =>
-                        game.skillLevelCapIncreases
-                            .getObjectByID(x.__ref)
-                    )
-                    .filter(Boolean);
-        }
-
-        if (data.levelCapIncreasesBeingSelected) {
-            game.levelCapIncreasesBeingSelected =
-                data.levelCapIncreasesBeingSelected
-                    .map(x =>
-                        game.skillLevelCapIncreases
-                            .getObjectByID(x.__ref)
-                    )
-                    .filter(Boolean);
-        }
-    }
-
-    decodeBtn.onclick = () => {
-        try {
-            const reader =
-                new SaveWriter("Read", 1);
-
-            const saveVersion =
-                reader.setDataFromSaveString(
-                    save.value.trim()
-                );
-
-            game.decode(
-                reader,
-                saveVersion
-            );
-
-            const data =
-                snapshotSaveData();
-
-            json.value =
-                JSON.stringify(
-                    data,
-                    null,
-                    2
-                );
-
-            console.log(
-                "JSON size:",
-                json.value.length
-            );
-
-        } catch (e) {
-            console.error(e);
-            alert(e.stack || e);
-        }
-    };
-
-    encodeBtn.onclick = () => {
-        try {
-            const data =
-                JSON.parse(json.value);
-
-            applySaveData(data);
-
-            output.value =
-                game.generateSaveString();
-
-        } catch (e) {
-            console.error(e);
-            alert(e.stack || e);
-        }
-    };
-
-    closeBtn.onclick =
-        () => div.remove();
+    setStatus("Paste a save string and press Decode.");
 })();
