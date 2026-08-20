@@ -65,8 +65,29 @@
         return game?.items?.getObjectByID?.(id.trim());
     }
 
-    function getGoldCurrency() {
-        return game?.gp ?? game?.currencies?.getObjectByID?.("melvorD:GP");
+    function currencyEntries() {
+        const currencies = game?.currencies?.allObjects;
+        if (!currencies) {
+            const gp = game?.gp;
+            return gp ? [gp] : [];
+        }
+
+        const list = [...currencies];
+
+        // Some builds expose GP separately as game.gp. Ensure it is visible
+        // without duplicating it when it is already in the registry.
+        if (game?.gp && !list.includes(game.gp))
+            list.unshift(game.gp);
+
+        return list;
+    }
+
+    function currencyName(currency) {
+        try {
+            return currency?.name ?? currency?.id ?? "Unknown Currency";
+        } catch {
+            return currency?.id ?? "Unknown Currency";
+        }
     }
 
     function currencyAmount(currency) {
@@ -78,7 +99,7 @@
 
     function setCurrencyAmount(currency, requested) {
         const target = Math.max(0, Math.floor(Number(requested)));
-        if (!Number.isFinite(target)) throw new Error("Invalid gold amount");
+        if (!Number.isFinite(target)) throw new Error("Invalid currency amount");
 
         const current = currencyAmount(currency);
         const delta = target - current;
@@ -100,7 +121,7 @@
             currency.amount = target;
             return;
         }
-        throw new Error("Gold currency cannot be modified with this game version.");
+        throw new Error("Currency cannot be modified with this game version.");
     }
 
     function bankEntries() {
@@ -308,7 +329,7 @@
     }
 
     function render() {
-        const gold = getGoldCurrency();
+        const currencies = currencyEntries();
         const entries = bankEntries();
         const skills = skillEntries();
         const allItems = game?.items?.allObjects ? [...game.items.allObjects] : [];
@@ -316,6 +337,23 @@
         const itemOptions = allItems.map(item =>
             `<option value="${esc(item.id)}">${esc(itemName(item))}</option>`
         ).join("");
+
+        const currencyRows = currencies.map(currency => {
+            const id = currency?.id ?? "";
+            return `
+                <tr data-currency-id="${esc(id)}">
+                    <td style="min-width:200px">
+                        <strong>${esc(currencyName(currency))}</strong>
+                    </td>
+                    <td style="min-width:230px;color:#9ca3af">${esc(id)}</td>
+                    <td style="min-width:180px">
+                        <input class="mse-currency-amount" type="number" min="0" step="1"
+                               value="${esc(Math.floor(currencyAmount(currency)))}"
+                               style="width:100%;box-sizing:border-box">
+                    </td>
+                </tr>
+            `;
+        }).join("");
 
         const skillRows = skills.map(skill => {
             const level = skillLevel(skill);
@@ -360,16 +398,28 @@
         tree.innerHTML = `
             <datalist id="mse-item-ids">${itemOptions}</datalist>
 
-            <details open style="border-bottom:1px solid #374151">
-                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">▾ Gold Currency</summary>
-                <div style="padding:12px;display:grid;grid-template-columns:180px minmax(180px,320px);align-items:center;gap:8px">
-                    <label for="mse-gold">Gold (GP)</label>
-                    <input id="mse-gold" type="number" min="0" step="1" value="${esc(currencyAmount(gold))}">
+            <details style="border-bottom:1px solid #374151">
+                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">
+                    Currency <span style="font-weight:400;color:#9ca3af">(${currencies.length})</span>
+                </summary>
+                <div style="padding:8px">
+                    <div style="overflow:auto">
+                        <table style="width:100%;border-collapse:collapse;white-space:nowrap">
+                            <thead style="position:sticky;top:0;background:#1f2937;z-index:1">
+                                <tr>
+                                    <th style="text-align:left">Currency</th>
+                                    <th style="text-align:left">ID</th>
+                                    <th style="text-align:left">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>${currencyRows}</tbody>
+                        </table>
+                    </div>
                 </div>
             </details>
 
-            <details open style="border-bottom:1px solid #374151">
-                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">▾ Skills <span style="font-weight:400;color:#9ca3af">(${skills.length})</span></summary>
+            <details style="border-bottom:1px solid #374151">
+                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">Skills <span style="font-weight:400;color:#9ca3af">(${skills.length})</span></summary>
                 <div style="padding:8px">
                     <div style="padding:4px 4px 10px;color:#9ca3af">
                         XP is applied through each skill's <code>addXP()</code> method. Target Level only raises levels; direct level reduction/raw _level editing is intentionally disabled.
@@ -387,8 +437,8 @@
                 </div>
             </details>
 
-            <details open>
-                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">▾ Bank Items <span style="font-weight:400;color:#9ca3af">(${entries.length})</span></summary>
+            <details>
+                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">Bank Items <span style="font-weight:400;color:#9ca3af">(${entries.length})</span></summary>
                 <div style="padding:8px">
                     <div style="display:grid;grid-template-columns:minmax(260px,1fr) 120px auto;gap:6px;margin-bottom:8px">
                         <input id="mse-add-id" list="mse-item-ids" placeholder="Item ID, e.g. melvorD:Tin_Ore">
@@ -423,21 +473,28 @@
             el.style.borderBottom = "1px solid #263244";
         });
 
-        const goldInput = tree.querySelector("#mse-gold");
-        if (goldInput) {
-            goldInput.addEventListener("change", () => {
+        tree.querySelectorAll(".mse-currency-amount").forEach(input => {
+            const row = input.closest("tr");
+            input.addEventListener("change", () => {
                 try {
-                    const currency = getGoldCurrency();
-                    if (!currency) throw new Error("Gold currency not found.");
-                    setCurrencyAmount(currency, goldInput.value);
-                    goldInput.value = currencyAmount(currency);
-                    setStatus("Gold updated.");
+                    const currencyID = row.dataset.currencyId;
+                    const currency =
+                        game?.currencies?.getObjectByID?.(currencyID) ??
+                        currencyEntries().find(x => (x?.id ?? "") === currencyID);
+
+                    if (!currency)
+                        throw new Error(`Currency not found: ${currencyID}`);
+
+                    setCurrencyAmount(currency, input.value);
+                    input.value = Math.floor(currencyAmount(currency));
+                    setStatus(`${currencyName(currency)} updated.`);
                 } catch (e) {
                     setStatus(e.stack || e.message || String(e), true);
                     console.error(e);
+                    render();
                 }
             });
-        }
+        });
 
         tree.querySelectorAll(".mse-item-id").forEach(input => {
             const row = input.closest("tr");
@@ -555,7 +612,7 @@
             game.decode(reader, saveVersion);
             output.value = "";
             render();
-            setStatus(`Decoded save version ${saveVersion}. Edit Gold, Skills or Bank Items below.`);
+            setStatus(`Decoded save version ${saveVersion}. Edit Currency, Skills, or Bank Items below.`);
         } catch (e) {
             console.error(e);
             setStatus(e.stack || e.message || String(e), true);
