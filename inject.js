@@ -1,6 +1,11 @@
 (() => {
     const d = document;
 
+    // Remove a previous instance cleanly, including document-level listeners.
+    if (typeof window.__melvorSaveEditorCleanup === "function") {
+        try { window.__melvorSaveEditorCleanup(); } catch {}
+    }
+
     const old = d.getElementById("melvor-smart-save-editor");
     if (old) old.remove();
 
@@ -20,12 +25,15 @@
     `;
 
     win.innerHTML = `
-        <div id="mse-titlebar" style="height:38px;min-height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 7px 0 12px;background:#0b1220;border-bottom:1px solid #374151;cursor:move;user-select:none">
-            <strong>Melvor Smart Save Editor</strong>
-            <button id="mse-close" title="Close" style="width:30px;height:30px;border:0;border-radius:6px;background:transparent;color:#d1d5db;font-size:21px;cursor:pointer">×</button>
+        <div id="mse-titlebar" style="height:38px;min-height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 7px 0 10px;background:#0b1220;border-bottom:1px solid #374151;cursor:move;user-select:none">
+            <div style="display:flex;align-items:center;gap:5px;min-width:0">
+                <button id="mse-toggle" title="Minimize" aria-label="Minimize" style="width:26px;height:26px;border:0;border-radius:5px;background:transparent;color:#d1d5db;font-size:14px;line-height:26px;padding:0;cursor:pointer">▼</button>
+                <strong>Melvor Save Editor</strong>
+            </div>
+            <button id="mse-close" title="Close" aria-label="Close" style="width:30px;height:30px;border:0;border-radius:6px;background:transparent;color:#d1d5db;font-size:21px;cursor:pointer">×</button>
         </div>
 
-        <div style="padding:10px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0">
+        <div id="mse-body" style="padding:10px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0">
             <div style="display:grid;grid-template-columns:1fr auto;gap:7px">
                 <textarea id="mse-save" placeholder="Save String" style="height:68px;resize:vertical;background:#0b1220;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:7px"></textarea>
                 <button id="mse-decode" style="min-width:92px">Decode</button>
@@ -631,36 +639,101 @@
         }
     };
 
-    $("#mse-close").onclick = () => win.remove();
-
-    // Draggable title bar
     const titlebar = $("#mse-titlebar");
+    const body = $("#mse-body");
+    const toggleBtn = $("#mse-toggle");
+
     let dragging = false;
     let dx = 0;
     let dy = 0;
+    let minimized = false;
+    let expandedHeight = win.style.height;
+    let expandedMinHeight = win.style.minHeight;
+    let expandedResize = win.style.resize;
 
-    titlebar.addEventListener("mousedown", e => {
-        if (e.target.closest("#mse-close")) return;
+    function cleanup() {
+        dragging = false;
+        d.body.style.userSelect = "";
+        d.removeEventListener("mousemove", onMouseMove);
+        d.removeEventListener("mouseup", onMouseUp);
+
+        if (win.isConnected)
+            win.remove();
+
+        if (window.__melvorSaveEditorCleanup === cleanup)
+            delete window.__melvorSaveEditorCleanup;
+    }
+
+    function setMinimized(value) {
+        minimized = value;
+
+        if (minimized) {
+            expandedHeight = win.style.height || `${win.offsetHeight}px`;
+            expandedMinHeight = win.style.minHeight;
+            expandedResize = win.style.resize;
+
+            body.style.display = "none";
+            win.style.height = "38px";
+            win.style.minHeight = "38px";
+            win.style.resize = "none";
+            toggleBtn.textContent = "▶";
+            toggleBtn.title = "Maximize";
+            toggleBtn.setAttribute("aria-label", "Maximize");
+        } else {
+            body.style.display = "flex";
+            win.style.height = expandedHeight || "min(780px,calc(100vh - 40px))";
+            win.style.minHeight = expandedMinHeight || "420px";
+            win.style.resize = expandedResize || "both";
+            toggleBtn.textContent = "▼";
+            toggleBtn.title = "Minimize";
+            toggleBtn.setAttribute("aria-label", "Minimize");
+        }
+    }
+
+    function onMouseDown(e) {
+        if (e.target.closest("#mse-close") || e.target.closest("#mse-toggle"))
+            return;
+
         dragging = true;
         const r = win.getBoundingClientRect();
         dx = e.clientX - r.left;
         dy = e.clientY - r.top;
         d.body.style.userSelect = "none";
         e.preventDefault();
-    });
+    }
 
-    d.addEventListener("mousemove", e => {
-        if (!dragging || !win.isConnected) return;
-        const left = Math.min(Math.max(0, e.clientX - dx), Math.max(0, innerWidth - win.offsetWidth));
-        const top = Math.min(Math.max(0, e.clientY - dy), Math.max(0, innerHeight - win.offsetHeight));
+    function onMouseMove(e) {
+        if (!dragging || !win.isConnected)
+            return;
+
+        const left = Math.min(
+            Math.max(0, e.clientX - dx),
+            Math.max(0, innerWidth - win.offsetWidth)
+        );
+
+        const top = Math.min(
+            Math.max(0, e.clientY - dy),
+            Math.max(0, innerHeight - win.offsetHeight)
+        );
+
         win.style.left = `${left}px`;
         win.style.top = `${top}px`;
-    });
+    }
 
-    d.addEventListener("mouseup", () => {
+    function onMouseUp() {
         dragging = false;
         d.body.style.userSelect = "";
-    });
+    }
+
+    $("#mse-close").onclick = cleanup;
+    toggleBtn.onclick = () => setMinimized(!minimized);
+
+    titlebar.addEventListener("mousedown", onMouseDown);
+    d.addEventListener("mousemove", onMouseMove);
+    d.addEventListener("mouseup", onMouseUp);
+
+    // Expose cleanup only so reinjecting or closing removes the injector cleanly.
+    window.__melvorSaveEditorCleanup = cleanup;
 
     setStatus("Paste a save string and press Decode.");
 })();
