@@ -119,6 +119,126 @@
         catch { return ""; }
     }
 
+    function skillEntries() {
+        const skills = game?.skills?.allObjects;
+        if (!skills) return [];
+        return [...skills].filter(skill =>
+            typeof skill?.addXP === "function" &&
+            Number.isFinite(Number(skill?.xp ?? skill?._xp)) &&
+            Number.isFinite(Number(skill?.level ?? skill?._level))
+        );
+    }
+
+    function skillName(skill) {
+        try { return skill?.name ?? skill?.id ?? "Unknown Skill"; }
+        catch { return skill?.id ?? "Unknown Skill"; }
+    }
+
+    function skillLevel(skill) {
+        const value = Number(skill?.level ?? skill?._level ?? 1);
+        return Number.isFinite(value) ? value : 1;
+    }
+
+    function skillXP(skill) {
+        const value = Number(skill?.xp ?? skill?._xp ?? 0);
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    function skillLevelCap(skill) {
+        const candidates = [
+            skill?.currentLevelCap,
+            skill?.levelCap,
+            skill?._levelCap,
+            skill?.maxLevel
+        ];
+        for (const value of candidates) {
+            const n = Number(value);
+            if (Number.isFinite(n) && n > 0) return n;
+        }
+        return null;
+    }
+
+    function xpForLevel(targetLevel) {
+        const target = Math.max(1, Math.floor(Number(targetLevel)));
+        if (!Number.isFinite(target)) throw new Error("Invalid target level");
+        if (target <= 1) return 0;
+
+        const table = globalThis.exp;
+        if (!table) throw new Error("Global XP table (exp) is unavailable in this game build.");
+
+        // Older Melvor builds expose level_to_xp(), while newer builds may
+        // expose levelToXP() or only xpToLevel(). Prefer the direct API.
+        if (typeof table.level_to_xp === "function")
+            return Math.max(0, Math.floor(Number(table.level_to_xp(target))));
+
+        if (typeof table.levelToXP === "function")
+            return Math.max(0, Math.floor(Number(table.levelToXP(target))));
+
+        if (typeof table.xpToLevel !== "function")
+            throw new Error("No supported XP conversion function was found on exp.");
+
+        let low = 0;
+        let high = 1;
+
+        while (table.xpToLevel(high) < target) {
+            high *= 2;
+            if (!Number.isSafeInteger(high) || high > Number.MAX_SAFE_INTEGER / 2)
+                throw new Error(`Could not calculate XP for level ${target}.`);
+        }
+
+        while (low < high) {
+            const mid = Math.floor((low + high) / 2);
+            if (table.xpToLevel(mid) >= target) high = mid;
+            else low = mid + 1;
+        }
+
+        return low;
+    }
+
+    function addSkillXP(skillID, requestedXP) {
+        const skill = game?.skills?.getObjectByID?.(skillID);
+        if (!skill) throw new Error(`Skill not found: ${skillID}`);
+        if (typeof skill.addXP !== "function")
+            throw new Error(`${skillID} does not expose addXP().`);
+
+        const amount = Math.floor(Number(requestedXP));
+        if (!Number.isFinite(amount) || amount <= 0)
+            throw new Error("XP to add must be greater than 0.");
+
+        skill.addXP(amount);
+    }
+
+    function raiseSkillToLevel(skillID, requestedLevel) {
+        const skill = game?.skills?.getObjectByID?.(skillID);
+        if (!skill) throw new Error(`Skill not found: ${skillID}`);
+        if (typeof skill.addXP !== "function")
+            throw new Error(`${skillID} does not expose addXP().`);
+
+        const target = Math.max(1, Math.floor(Number(requestedLevel)));
+        if (!Number.isFinite(target)) throw new Error("Invalid target level.");
+
+        const currentLevel = skillLevel(skill);
+        if (target <= currentLevel)
+            throw new Error(`Target level must be above current level (${currentLevel}). Lowering levels is intentionally disabled.`);
+
+        const cap = skillLevelCap(skill);
+        if (cap !== null && target > cap)
+            throw new Error(`Target level ${target} exceeds this skill's current cap (${cap}).`);
+
+        const targetXP = xpForLevel(target);
+        const currentXP = skillXP(skill);
+        const delta = Math.max(0, Math.ceil(targetXP - currentXP));
+        if (delta <= 0)
+            throw new Error(`No XP is required to reach level ${target}.`);
+
+        skill.addXP(delta);
+
+        if (skillLevel(skill) < target) {
+            // Protect against rounding/table boundary differences between builds.
+            skill.addXP(1);
+        }
+    }
+
     function removeBankItem(item, qty) {
         if (qty <= 0) return;
         if (typeof game.bank.removeItemQuantity === "function") {
@@ -190,11 +310,38 @@
     function render() {
         const gold = getGoldCurrency();
         const entries = bankEntries();
+        const skills = skillEntries();
         const allItems = game?.items?.allObjects ? [...game.items.allObjects] : [];
 
         const itemOptions = allItems.map(item =>
             `<option value="${esc(item.id)}">${esc(itemName(item))}</option>`
         ).join("");
+
+        const skillRows = skills.map(skill => {
+            const level = skillLevel(skill);
+            const xp = skillXP(skill);
+            const cap = skillLevelCap(skill);
+            return `
+                <tr data-skill-id="${esc(skill.id)}">
+                    <td style="min-width:170px"><strong>${esc(skillName(skill))}</strong><div style="font-size:11px;color:#9ca3af">${esc(skill.id)}</div></td>
+                    <td style="width:70px;text-align:center">${esc(level)}</td>
+                    <td style="min-width:130px;text-align:right">${esc(Math.floor(xp).toLocaleString())}</td>
+                    <td style="width:70px;text-align:center">${esc(cap ?? "—")}</td>
+                    <td style="min-width:220px">
+                        <div style="display:grid;grid-template-columns:1fr auto;gap:5px">
+                            <input class="mse-skill-add-xp" type="number" min="1" step="1" placeholder="XP to add">
+                            <button class="mse-skill-add-xp-btn">Add XP</button>
+                        </div>
+                    </td>
+                    <td style="min-width:220px">
+                        <div style="display:grid;grid-template-columns:1fr auto;gap:5px">
+                            <input class="mse-skill-target-level" type="number" min="${esc(level + 1)}" ${cap ? `max="${esc(cap)}"` : ""} step="1" placeholder="Target level">
+                            <button class="mse-skill-target-btn">Raise</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join("");
 
         const rows = entries.map(({ item, bankItem }, index) => {
             const media = itemMedia(item);
@@ -218,6 +365,25 @@
                 <div style="padding:12px;display:grid;grid-template-columns:180px minmax(180px,320px);align-items:center;gap:8px">
                     <label for="mse-gold">Gold (GP)</label>
                     <input id="mse-gold" type="number" min="0" step="1" value="${esc(currencyAmount(gold))}">
+                </div>
+            </details>
+
+            <details open style="border-bottom:1px solid #374151">
+                <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">▾ Skills <span style="font-weight:400;color:#9ca3af">(${skills.length})</span></summary>
+                <div style="padding:8px">
+                    <div style="padding:4px 4px 10px;color:#9ca3af">
+                        XP is applied through each skill's <code>addXP()</code> method. Target Level only raises levels; direct level reduction/raw _level editing is intentionally disabled.
+                    </div>
+                    <div style="overflow:auto">
+                        <table style="width:100%;border-collapse:collapse;white-space:nowrap">
+                            <thead style="position:sticky;top:0;background:#1f2937;z-index:1">
+                                <tr>
+                                    <th style="text-align:left">Skill</th><th>Level</th><th style="text-align:right">XP</th><th>Cap</th><th>Add XP</th><th>Target Level</th>
+                                </tr>
+                            </thead>
+                            <tbody>${skillRows}</tbody>
+                        </table>
+                    </div>
                 </div>
             </details>
 
@@ -314,6 +480,43 @@
             });
         });
 
+        tree.querySelectorAll(".mse-skill-add-xp-btn").forEach(button => {
+            const row = button.closest("tr");
+            const input = row.querySelector(".mse-skill-add-xp");
+            button.addEventListener("click", () => {
+                try {
+                    const skillID = row.dataset.skillId;
+                    addSkillXP(skillID, input.value);
+                    const updated = game.skills.getObjectByID(skillID);
+                    setStatus(`${skillName(updated)}: XP added through addXP(). Level ${skillLevel(updated)}, XP ${Math.floor(skillXP(updated)).toLocaleString()}.`);
+                    render();
+                } catch (e) {
+                    setStatus(e.stack || e.message || String(e), true);
+                    console.error(e);
+                }
+            });
+        });
+
+        tree.querySelectorAll(".mse-skill-target-btn").forEach(button => {
+            const row = button.closest("tr");
+            const input = row.querySelector(".mse-skill-target-level");
+            button.addEventListener("click", () => {
+                try {
+                    const skillID = row.dataset.skillId;
+                    const before = game.skills.getObjectByID(skillID);
+                    const beforeLevel = skillLevel(before);
+                    const beforeXP = skillXP(before);
+                    raiseSkillToLevel(skillID, input.value);
+                    const updated = game.skills.getObjectByID(skillID);
+                    setStatus(`${skillName(updated)}: ${beforeLevel} → ${skillLevel(updated)} via addXP() (+${Math.max(0, Math.floor(skillXP(updated) - beforeXP)).toLocaleString()} XP).`);
+                    render();
+                } catch (e) {
+                    setStatus(e.stack || e.message || String(e), true);
+                    console.error(e);
+                }
+            });
+        });
+
         const addID = tree.querySelector("#mse-add-id");
         const addQty = tree.querySelector("#mse-add-qty");
         const addPreview = tree.querySelector("#mse-add-preview");
@@ -352,7 +555,7 @@
             game.decode(reader, saveVersion);
             output.value = "";
             render();
-            setStatus(`Decoded save version ${saveVersion}. Edit Gold or Bank Items below.`);
+            setStatus(`Decoded save version ${saveVersion}. Edit Gold, Skills or Bank Items below.`);
         } catch (e) {
             console.error(e);
             setStatus(e.stack || e.message || String(e), true);
