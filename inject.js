@@ -148,6 +148,11 @@
         catch { return ""; }
     }
 
+    function objectMedia(object) {
+        try { return object?.media ?? object?._media ?? ""; }
+        catch { return ""; }
+    }
+
     function skillEntries() {
         const skills = game?.skills?.allObjects;
         if (!skills) return [];
@@ -348,8 +353,10 @@
 
         const currencyRows = currencies.map(currency => {
             const id = currency?.id ?? "";
+            const media = objectMedia(currency);
             return `
                 <tr data-currency-id="${esc(id)}">
+                    <td style="width:36px;text-align:center">${media ? `<img src="${esc(media)}" style="width:28px;height:28px;object-fit:contain" onerror="this.style.display='none'">` : ""}</td>
                     <td style="min-width:200px">
                         <strong>${esc(currencyName(currency))}</strong>
                     </td>
@@ -367,8 +374,10 @@
             const level = skillLevel(skill);
             const xp = skillXP(skill);
             const cap = skillLevelCap(skill);
+            const media = objectMedia(skill);
             return `
                 <tr data-skill-id="${esc(skill.id)}">
+                    <td style="width:36px;text-align:center">${media ? `<img src="${esc(media)}" style="width:28px;height:28px;object-fit:contain" onerror="this.style.display='none'">` : ""}</td>
                     <td style="min-width:170px"><strong>${esc(skillName(skill))}</strong><div style="font-size:11px;color:#9ca3af">${esc(skill.id)}</div></td>
                     <td style="width:70px;text-align:center">${esc(level)}</td>
                     <td style="min-width:130px;text-align:right">${esc(Math.floor(xp).toLocaleString())}</td>
@@ -377,12 +386,6 @@
                         <div style="display:grid;grid-template-columns:1fr auto;gap:5px">
                             <input class="mse-skill-add-xp" type="number" min="1" step="1" placeholder="XP to add">
                             <button class="mse-skill-add-xp-btn">Add XP</button>
-                        </div>
-                    </td>
-                    <td style="min-width:220px">
-                        <div style="display:grid;grid-template-columns:1fr auto;gap:5px">
-                            <input class="mse-skill-target-level" type="number" min="${esc(level + 1)}" ${cap ? `max="${esc(cap)}"` : ""} step="1" placeholder="Target level">
-                            <button class="mse-skill-target-btn">Raise</button>
                         </div>
                     </td>
                 </tr>
@@ -415,6 +418,7 @@
                         <table style="width:100%;border-collapse:collapse;white-space:nowrap">
                             <thead style="position:sticky;top:0;background:#1f2937;z-index:1">
                                 <tr>
+                                    <th style="width:36px"></th>
                                     <th style="text-align:left">Currency</th>
                                     <th style="text-align:left">ID</th>
                                     <th style="text-align:left">Amount</th>
@@ -430,13 +434,13 @@
                 <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">Skills <span style="font-weight:400;color:#9ca3af">(${skills.length})</span></summary>
                 <div style="padding:8px">
                     <div style="padding:4px 4px 10px;color:#9ca3af">
-                        XP is applied through each skill's <code>addXP()</code> method. Target Level only raises levels; direct level reduction/raw _level editing is intentionally disabled.
+                        XP is applied through each skill's <code>addXP()</code> method.
                     </div>
                     <div style="overflow:auto">
                         <table style="width:100%;border-collapse:collapse;white-space:nowrap">
                             <thead style="position:sticky;top:0;background:#1f2937;z-index:1">
                                 <tr>
-                                    <th style="text-align:left">Skill</th><th>Level</th><th style="text-align:right">XP</th><th>Cap</th><th>Add XP</th><th>Target Level</th>
+                                    <th style="width:36px"></th><th style="text-align:left">Skill</th><th>Level</th><th style="text-align:right">XP</th><th>Cap</th><th>Add XP</th>
                                 </tr>
                             </thead>
                             <tbody>${skillRows}</tbody>
@@ -554,26 +558,6 @@
                     addSkillXP(skillID, input.value);
                     const updated = game.skills.getObjectByID(skillID);
                     setStatus(`${skillName(updated)}: XP added through addXP(). Level ${skillLevel(updated)}, XP ${Math.floor(skillXP(updated)).toLocaleString()}.`);
-                    render();
-                } catch (e) {
-                    setStatus(e.stack || e.message || String(e), true);
-                    console.error(e);
-                }
-            });
-        });
-
-        tree.querySelectorAll(".mse-skill-target-btn").forEach(button => {
-            const row = button.closest("tr");
-            const input = row.querySelector(".mse-skill-target-level");
-            button.addEventListener("click", () => {
-                try {
-                    const skillID = row.dataset.skillId;
-                    const before = game.skills.getObjectByID(skillID);
-                    const beforeLevel = skillLevel(before);
-                    const beforeXP = skillXP(before);
-                    raiseSkillToLevel(skillID, input.value);
-                    const updated = game.skills.getObjectByID(skillID);
-                    setStatus(`${skillName(updated)}: ${beforeLevel} → ${skillLevel(updated)} via addXP() (+${Math.max(0, Math.floor(skillXP(updated) - beforeXP)).toLocaleString()} XP).`);
                     render();
                 } catch (e) {
                     setStatus(e.stack || e.message || String(e), true);
