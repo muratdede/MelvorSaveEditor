@@ -1,45 +1,132 @@
-# Melvor Save JSON Editor Injector
+# Melvor Save Editor
 
-This tool is designed to run directly inside the Melvor Idle page using the Chrome DevTools Console.
+Melvor Save Editor is a simple save editing tool for Melvor Idle.
 
-## How to Run
+It is designed to be easy to use.
 
-1. Open Melvor Idle in Google Chrome:
+## Supported Browsers
+
+The automatic launcher currently supports:
+
+- Google Chrome
+- Microsoft Edge
+- Mozilla Firefox
+- Brave
+- Opera
+
+If your default browser is not supported by the automatic launcher, you can still use Melvor Save Editor manually from your browser's JavaScript Console. See **Manual Injection** below.
+
+## How to Use
+
+1. Double-click:
+
+   `START.bat`
+
+2. Your default browser will open Melvor Idle automatically.
+
+3. Wait for Melvor Idle and your character to finish loading.
+
+4. The **Melvor Save Editor** window should appear automatically on top of the game.
+
+That is all. You do not need to do anything else.
+
+## Manual Injection
+
+If your browser is not supported by the automatic launcher, you can run the editor manually.
+
+1. Open Melvor Idle in your browser:
+
    `https://www.melvoridle.com/`
 
 2. Wait until the game and your character are fully loaded.
 
-3. Open Chrome DevTools:
-   - Press `F12`, or
-   - Press `Ctrl + Shift + I`
+3. Open your browser's Developer Tools.
+
+   Common shortcuts are:
+
+   - `F12`
+   - `Ctrl + Shift + I`
+   - On macOS: `Cmd + Option + I`
 
 4. Open the **Console** tab.
 
-5. Drag the `inject.js` file from File Explorer directly into the Chrome Console.
+5. Open the included:
 
-6. Chrome will paste the contents of the file into the Console.
+   `melvor_save_editor.js`
 
-7. Press `Enter` to execute it.
+6. Copy the entire contents of the file.
 
-8. The save editor interface should appear on top of the game.
+7. Paste the code into the browser Console.
 
-## Usage
+8. Press `Enter`.
 
-- Paste your Melvor save string into the **Save String** field.
-- Click **Decode** to load the save and display the editable save data as JSON.
-- Edit the JSON values you want to change.
-- Click **Encode** to apply the changes and generate a new save string.
-- Copy the generated save string from the output field.
+The **Melvor Save Editor** window should appear on top of the game.
+
+> Some browsers may display a warning before allowing JavaScript to be pasted into the Console. Follow the browser's instructions to enable pasting, then paste the script again.
+
+## Using the Editor
+
+### Load a Save
+
+1. Copy your Melvor save string.
+2. Paste it into the **Save String** field.
+3. Click **Decode**.
+
+The editor will load the supported save data.
+
+### Currency
+
+Open the **Currency** section to view and edit supported currencies.
+
+Change the amount of a currency directly in its input field.
+
+### Skills
+
+Open the **Skills** section to view:
+
+- Skill name
+- Current level
+- Current XP
+- Level cap
+
+To increase a skill's XP:
+
+1. Enter the amount of XP you want to add.
+2. Click **Add XP**.
+
+XP is added through Melvor's own skill system instead of directly overwriting the skill level.
+
+### Bank Items
+
+Open the **Bank Items** section to view the items currently stored in the bank.
+
+You can edit item quantities and supported item information.
+
+When an item ID is changed, the editor resolves the item through Melvor's item registry so the game receives a real item object instead of only a text ID.
+
+## Generate the New Save
+
+After making your changes:
+
+1. Click **Encode Save**.
+2. Copy the generated save string.
+3. Import the new save string into Melvor Idle.
+
+## First Launch
+
+The launcher uses a separate browser profile for Melvor Save Editor.
+
+Because of this, you may need to sign in to Melvor Idle or Steam on the first launch.
+
+Your login session is stored in that dedicated profile and should remain available for later launches.
+
+The profile is stored at:
+
+`%LOCALAPPDATA%\MelvorSaveEditor\Profiles`
 
 ## Important
 
-- Run the injector only after Melvor Idle has fully loaded.
-- The script must be executed inside the Melvor Idle page. Opening `inject.js` or a separate HTML file directly will not work because it needs access to the game's `game` and `SaveWriter` objects.
-- Keep a backup of your original save before making any changes.
-- Invalid JSON or unsupported changes may cause save generation to fail.
-
-## Chrome Paste Warning
-
-Chrome may sometimes block pasted code in DevTools and display a warning about self-XSS.
-
-If Chrome asks you to allow pasting, follow the instruction shown by Chrome in the Console, then drag `inject.js` into the Console again and press `Enter`.
+- Always keep a backup of your original save before making changes.
+- Wait until Melvor Idle has fully loaded before using the editor.
+- Invalid changes may produce an unusable save.
+- This tool modifies save data. Use it at your own risk.
