@@ -1,5 +1,14 @@
-(() => {
+(function waitForMelvorSaveEditor() {
     const d = document;
+
+    if (
+        !d.body ||
+        typeof game === "undefined" ||
+        typeof SaveWriter === "undefined"
+    ) {
+        setTimeout(waitForMelvorSaveEditor, 500);
+        return;
+    }
 
     // Remove a previous instance cleanly, including document-level listeners.
     if (typeof window.__melvorSaveEditorCleanup === "function") {
@@ -342,6 +351,17 @@
     }
 
     function render() {
+        // Preserve UI state across re-renders. On the first render there are no
+        // existing sections, so all <details> elements keep their default
+        // collapsed state.
+        const sectionState = new Map(
+            [...tree.querySelectorAll("details[data-section]")].map(section => [
+                section.dataset.section,
+                section.open
+            ])
+        );
+        const previousScrollTop = tree.scrollTop;
+
         const currencies = currencyEntries();
         const entries = bankEntries();
         const skills = skillEntries();
@@ -409,7 +429,7 @@
         tree.innerHTML = `
             <datalist id="mse-item-ids">${itemOptions}</datalist>
 
-            <details style="border-bottom:1px solid #374151">
+            <details data-section="currency" style="border-bottom:1px solid #374151">
                 <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">
                     Currency <span style="font-weight:400;color:#9ca3af">(${currencies.length})</span>
                 </summary>
@@ -430,7 +450,7 @@
                 </div>
             </details>
 
-            <details style="border-bottom:1px solid #374151">
+            <details data-section="skills" style="border-bottom:1px solid #374151">
                 <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">Skills <span style="font-weight:400;color:#9ca3af">(${skills.length})</span></summary>
                 <div style="padding:8px">
                     <div style="padding:4px 4px 10px;color:#9ca3af">
@@ -449,7 +469,7 @@
                 </div>
             </details>
 
-            <details>
+            <details data-section="bank-items">
                 <summary style="padding:10px 12px;background:#111827;cursor:pointer;font-weight:700">Bank Items <span style="font-weight:400;color:#9ca3af">(${entries.length})</span></summary>
                 <div style="padding:8px">
                     <div style="display:grid;grid-template-columns:minmax(260px,1fr) 120px auto;gap:6px;margin-bottom:8px">
@@ -472,6 +492,13 @@
                 </div>
             </details>
         `;
+
+        // Restore section open/closed state after rebuilding the tree.
+        tree.querySelectorAll("details[data-section]").forEach(section => {
+            if (sectionState.has(section.dataset.section))
+                section.open = sectionState.get(section.dataset.section);
+        });
+        tree.scrollTop = previousScrollTop;
 
         tree.querySelectorAll("input,button").forEach(el => {
             el.style.background = el.tagName === "BUTTON" ? "#243244" : "#0b1220";
